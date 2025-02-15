@@ -1,4 +1,4 @@
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.vertexai import VertexAIModel
 from pydantic_ai import Agent, RunContext
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
@@ -25,23 +25,21 @@ load_dotenv()
 # Configure logfire to suppress warnings (optional)
 logfire.configure(send_to_logfire='never')
 
-base_url = os.getenv('BASE_URL', 'https://api.openai.com/v1')
-api_key = os.getenv('LLM_API_KEY', 'no-llm-api-key-provided')
-is_ollama = "localhost" in base_url.lower()
-reasoner_llm_model = os.getenv('REASONER_MODEL', 'o3-mini')
+project_id = os.getenv('GCP_PROJECT_ID')
+region = os.getenv('GCP_REGION', 'us-central1')
+
 reasoner = Agent(  
-    OpenAIModel(reasoner_llm_model, base_url=base_url, api_key=api_key),
+    VertexAIModel('gemini-2.0-flash-thinking-exp-01-21', project_id=project_id, region=region),
     system_prompt='You are an expert at coding AI agents with Pydantic AI and defining the scope for doing so.',  
 )
 
-primary_llm_model = os.getenv('PRIMARY_MODEL', 'gpt-4o-mini')
 router_agent = Agent(  
-    OpenAIModel(primary_llm_model, base_url=base_url, api_key=api_key),
+    VertexAIModel('gemini-2.0-flash-001', project_id=project_id, region=region),
     system_prompt='Your job is to route the user message either to the end of the conversation or to continue coding the AI agent.',  
 )
 
 end_conversation_agent = Agent(  
-    OpenAIModel(primary_llm_model, base_url=base_url, api_key=api_key),
+    VertexAIModel('gemini-2.0-flash-001', project_id=project_id, region=region),
     system_prompt='Your job is to end a conversation for creating an AI agent by giving instructions for how to execute the agent and they saying a nice goodbye to the user.',  
 )
 
@@ -107,21 +105,14 @@ async def coder_agent(state: AgentState, writer):
         message_history.extend(ModelMessagesTypeAdapter.validate_json(message_row))
 
     # Run the agent in a stream
-    if is_ollama:
-        writer = get_stream_writer()
-        result = await pydantic_ai_coder.run(state['latest_user_message'], deps=deps, message_history= message_history)
-        writer(result.data)
-    else:
-        async with pydantic_ai_coder.run_stream(
-            state['latest_user_message'],
-            deps=deps,
-            message_history= message_history
-        ) as result:
-            # Stream partial text as it arrives
-            async for chunk in result.stream_text(delta=True):
-                writer(chunk)
-
-    # print(ModelMessagesTypeAdapter.validate_json(result.new_messages_json()))
+    async with pydantic_ai_coder.run_stream(
+        state['latest_user_message'],
+        deps=deps,
+        message_history=message_history
+    ) as result:
+        # Stream partial text as it arrives
+        async for chunk in result.stream_text(delta=True):
+            writer(chunk)
 
     return {"messages": [result.new_messages_json()]}
 
@@ -159,20 +150,14 @@ async def finish_conversation(state: AgentState, writer):
     message_history: list[ModelMessage] = []
     for message_row in state['messages']:
         message_history.extend(ModelMessagesTypeAdapter.validate_json(message_row))
-
-    # Run the agent in a stream
-    if is_ollama:
-        writer = get_stream_writer()
-        result = await end_conversation_agent.run(state['latest_user_message'], message_history= message_history)
-        writer(result.data)   
-    else: 
-        async with end_conversation_agent.run_stream(
-            state['latest_user_message'],
-            message_history= message_history
-        ) as result:
-            # Stream partial text as it arrives
-            async for chunk in result.stream_text(delta=True):
-                writer(chunk)
+    
+    async with end_conversation_agent.run_stream(
+        state['latest_user_message'],
+        message_history=message_history
+    ) as result:
+        # Stream partial text as it arrives
+        async for chunk in result.stream_text(delta=True):
+            writer(chunk)
 
     return {"messages": [result.new_messages_json()]}        
 

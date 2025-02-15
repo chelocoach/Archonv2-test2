@@ -8,17 +8,16 @@ import httpx
 import os
 
 from pydantic_ai import Agent, ModelRetry, RunContext
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.vertexai import VertexAIModel
 from openai import AsyncOpenAI
 from supabase import Client
 from typing import List
 
 load_dotenv()
 
-llm = os.getenv('PRIMARY_MODEL', 'gpt-4o-mini')
-base_url = os.getenv('BASE_URL', 'https://api.openai.com/v1')
-api_key = os.getenv('LLM_API_KEY', 'no-llm-api-key-provided')
-model = OpenAIModel(llm, base_url=base_url, api_key=api_key)
+project_id = os.getenv('GCP_PROJECT_ID')
+region = os.getenv('GCP_REGION', 'us-central1')
+model = VertexAIModel('gemini-2.0-flash-001', project_id=project_id, region=region)
 
 logfire.configure(send_to_logfire='if-token-present')
 
